@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, text
+from sqlalchemy import CheckConstraint, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 
 
@@ -35,6 +35,18 @@ class Action(StrEnum):
     MONITOR = 'monitor'
     RETIME = 'retime'
     STANDBY = 'standby'
+
+
+class StandbyBatchState(StrEnum):
+    PLANNED = 'planned'
+    PUBLISHED = 'published'
+    RETURNED = 'returned'
+    SUPERSEDED = 'superseded'
+
+
+class StandbyItemState(StrEnum):
+    SCHEDULED = 'scheduled'
+    BLOCKED = 'blocked'
 
 
 def enum(kind):
@@ -136,6 +148,55 @@ class DispatchReview(Base):
     outcome = mapped_column(String(300))
     closed_by = mapped_column(ForeignKey('users.username'))
     closed_at = mapped_column(DateTime)
+
+
+class StandbyBatch(Base):
+    __tablename__ = 'standby_batches'
+    code = mapped_column(String(32), primary_key=True)
+    state = mapped_column(enum(StandbyBatchState), nullable=False, default=StandbyBatchState.PLANNED, index=True)
+    note = mapped_column(String(300), nullable=False)
+    created_by = mapped_column(ForeignKey('users.username'), nullable=False)
+    created_at = mapped_column(DateTime, nullable=False)
+    planned_at = mapped_column(DateTime, nullable=False)
+    published_by = mapped_column(ForeignKey('users.username'))
+    published_at = mapped_column(DateTime)
+    returned_at = mapped_column(DateTime)
+    return_reason = mapped_column(String(300))
+    attempts = mapped_column(Integer, nullable=False, default=0)
+
+
+class StandbyPlanItem(Base):
+    __tablename__ = 'standby_plan_items'
+    __table_args__ = (
+        UniqueConstraint('batch_code', 'incident_code', name='standby_item_once'),
+        CheckConstraint('ends_at > starts_at'),
+        Index('standby_rank_idx', 'batch_code', 'rank'),
+    )
+    id = mapped_column(Integer, primary_key=True)
+    batch_code = mapped_column(ForeignKey('standby_batches.code'), nullable=False)
+    incident_code = mapped_column(ForeignKey('delay_incidents.code'), nullable=False)
+    rank = mapped_column(Integer, nullable=False)
+    tug_code = mapped_column(ForeignKey('tugs.code'))
+    starts_at = mapped_column(DateTime, nullable=False)
+    ends_at = mapped_column(DateTime, nullable=False)
+    state = mapped_column(enum(StandbyItemState), nullable=False)
+    block_reason = mapped_column(String(240))
+
+
+class StandbyTugHold(Base):
+    __tablename__ = 'standby_tug_holds'
+    __table_args__ = (
+        UniqueConstraint('batch_code', 'incident_code', name='standby_hold_once'),
+        CheckConstraint('ends_at > starts_at'),
+        Index('standby_hold_idx', 'tug_code', 'released_at', 'starts_at', 'ends_at'),
+    )
+    id = mapped_column(Integer, primary_key=True)
+    batch_code = mapped_column(ForeignKey('standby_batches.code'), nullable=False)
+    incident_code = mapped_column(ForeignKey('delay_incidents.code'), nullable=False)
+    tug_code = mapped_column(ForeignKey('tugs.code'), nullable=False)
+    starts_at = mapped_column(DateTime, nullable=False)
+    ends_at = mapped_column(DateTime, nullable=False)
+    released_at = mapped_column(DateTime)
 
 
 class Audit(Base):

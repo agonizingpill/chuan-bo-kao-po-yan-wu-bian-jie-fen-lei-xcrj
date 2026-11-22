@@ -64,10 +64,15 @@ export function schedule(code) {
 
 export function resources(code) {
   const available = store.data.windows;
+  const holds = store.data.standby.flatMap(batch => batch.items
+    .filter(item => item.hold_active)
+    .map(item => ({...item, batch: batch.code})));
   const tugRows = store.data.tugs.map(tug => {
     const calendar = store.data.assignments.filter(a => a.tug_code === tug.code);
+    const standby = holds.filter(item => item.tug_code === tug.code);
     return `<article class="tug-line"><div><div class="reference mono">${esc(tug.code)} / ${tug.bollard_pull_t} t</div><h3>${esc(tug.label)}</h3></div><ul>${calendar.length ? calendar.map(a =>
-      `<li class="${a.released_at ? 'released' : ''}"><a href="#schedule/${esc(a.request_code)}">${esc(a.request_code)}</a> <time>${esc(interval(a.starts_at, a.ends_at))}</time>${a.released_at ? ' · 已释放' : ' · 已占用'}</li>`).join('') : '<li>暂无预约</li>'}</ul></article>`;
+      `<li class="${a.released_at ? 'released' : ''}"><a href="#schedule/${esc(a.request_code)}">${esc(a.request_code)}</a> <time>${esc(interval(a.starts_at, a.ends_at))}</time>${a.released_at ? ' · 已释放' : ' · 已占用'}</li>`).join('') : '<li>暂无预约</li>'}${standby.map(item =>
+      `<li><a href="#standby/${esc(item.batch)}">${esc(item.incident_code)}</a> <time>${esc(interval(item.starts_at, item.ends_at))}</time> · 待命占用</li>`).join('')}</ul></article>`;
   }).join('');
   return `${title('潮汐与拖轮', '以水文来源发布潮窗，按拖轮追踪各泊位的操纵占用。')}
   <div class="planning-grid"><section class="panel"><div class="section-head"><h2>水文通告</h2><span>港区时间 UTC+08</span></div>

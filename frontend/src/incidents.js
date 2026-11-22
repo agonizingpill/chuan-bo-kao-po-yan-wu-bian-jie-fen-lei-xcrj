@@ -30,11 +30,14 @@ function boundary(result) {
 function actionsFor(incident) {
   if (!supervisor()) return '';
   const code = incident.code;
+  const pending = store.data.standby?.find(batch => batch.state === 'planned'
+    && batch.items.some(item => item.incident_code === code));
   if (incident.state === 'failed') return form('retry', code, '', '按冻结输入重试');
   if (incident.state === 'margin_review') return form('verify', code, `
     <h3>人工确认分类</h3>${selectField('处置级别', 'decision', Object.entries(decisions))}
     ${notes('签署依据', 'reason', '例如已收到拖轮回转区的二次通报，需优先处置。')}`, '签署分类');
   if (incident.state === 'ready') {
+    if (pending) return `<p class="clearance">本案已列入待命批次 <a href="#standby/${esc(pending.code)}">${esc(pending.code)}</a>，请在批次页整批确认或重新预排。</p>`;
     const choices = Object.entries(actions).filter(([key]) => incident.decision !== 'priority' || key !== 'monitor');
     return form('dispatch', code, `<h3>发布值班指令</h3>${selectField('调度动作', 'action', choices)}
       ${notes('交接指令', 'instruction', '填写接收岗位与下一步动作。')}`, '发布指令');

@@ -33,4 +33,8 @@ export const api = {
   dispatch: (code, data) => request(`/delay-incidents/${encodeURIComponent(code)}/dispatch`, 'POST', data),
   close: (code, data) => request(`/delay-incidents/${encodeURIComponent(code)}/close`, 'POST', data),
   retry: code => request(`/delay-incidents/${encodeURIComponent(code)}/retry`, 'POST'),
+  standby: () => request('/standby-batches'),
+  planStandby: data => request('/standby-batches', 'POST', data),
+  replanStandby: code => request(`/standby-batches/${encodeURIComponent(code)}/replan`, 'POST'),
+  publishStandby: code => request(`/standby-batches/${encodeURIComponent(code)}/publish`, 'POST'),
 };

@@ -9,6 +9,7 @@ from .database import WAKE_QUEUE, queue
 from .models import Action, BerthRequest, DelayClass, DelayIncident, DispatchReview, IncidentState, RequestState
 from .planning import Rejected, audit, find, require_window, tide_clearance, utc_now
 from .schemas import CloseInput, DispatchInput, IncidentInput, MarginDecision
+from . import standby
 
 log = logging.getLogger(__name__)
 
@@ -79,8 +80,13 @@ def dispatch(db: DatabaseSession, actor: str, code: str, data: DispatchInput):
         raise Rejected('DISPATCH_STATE', '处置仅适用于已完成分类且尚未发布动作的案件', code)
     if incident.decision == DelayClass.PRIORITY and data.action == Action.MONITOR:
         raise Rejected('PRIORITY_ACTION_REQUIRED', '优先处置须发布待命或改期指令', code)
+    batch = standby.pending_batch_for(db, code)
+    if batch:
+        raise Rejected('STANDBY_BATCH_PENDING',
+                       f'该案已列入待命批次 {batch.code}，请整批确认或重新预排后再单独处置', code)
     record = DispatchReview(incident_code=code, issued_by=actor, issued_at=utc_now(), **data.model_dump())
     incident.state = IncidentState.ACTIONED
+    standby.release_holds(db, code, actor)
     db.add(record)
     audit(db, actor, code, 'ACTION_ISSUED', f'{data.action} · {data.instruction}')
     return record
@@ -100,5 +106,6 @@ def close(db: DatabaseSession, actor: str, code: str, data: CloseInput):
     record.closed_by = actor
     incident.state = IncidentState.CLOSED
     request.state = RequestState.COMPLETED
+    standby.release_holds(db, code, actor)
     audit(db, actor, code, 'REVIEW_CLOSED', f'{data.all_fast_at:%m-%d %H:%M} · {data.outcome}')
     return record

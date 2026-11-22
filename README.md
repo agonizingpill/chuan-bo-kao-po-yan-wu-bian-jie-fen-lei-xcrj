@@ -30,6 +30,17 @@
 6. worker 完成边界分类。该案件进入间隔带，常规动作审批暂停，主管依据二次通报签署优先处置。
 7. 值班主管发布拖轮待命指令。10:15 全缆系妥，工作人员补录实绩和交班纪要，案件结案，关联申请置为完成。
 
+### 待命拖轮整批预排
+
+午后三艘船同时争用待命拖轮，演示整批预排与确认：
+
+1. `BR-414`、`BR-415`、`BR-416` 于 10:30 计划引航，11:25 同时报告延误，形成 `DL-414`、`DL-415`、`DL-416`。三条案件均落在优先侧，等待发布待命指令。
+2. 主管在「待命整批」登记 `SB-1121-1`。系统只把已判优先、尚未发令的案件按分类分数从高到低排序，同分先排早报的；仍在计算、失败或等待间隔带签署的案件列在「仍在复核，暂不排序」，签署完成后才会进入下一轮预排。
+3. 系统按各案所需时段（观测时刻起一个操纵时长）逐条预排拖轮，并在表内标出排不上的原因：被其他靠泊预约占用、或已被本批更高次序的案件排定。`BR-417` 已预约 `TG23`，因此第三件只能在 `TG12`、`TG18` 已被本批占用后标为排不上。
+4. 预排不占用拖轮。主管确认整批后才写入待命占用，并给已排上的案件逐条下发待命指令。
+5. 若预排后另有预约抢占了任一预排时段，整批退回重排，本批一条指令都不发，案件保持待发布；退回原因与审计记录保留在同一批次。
+6. 发布成功后重复点击确认是幂等的：同一批不会重复占用拖轮或重复发令。
+
 业务时间统一以港区 UTC+08 录入，审计时间由数据库记录并在 API 中转换展示。
 
 ## 本地启动
@@ -45,19 +56,22 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 本地 Python 开发可只启动 `db` 和 `redis` 服务。在 `backend/` 用 Python 3.11 安装 `requirements.txt`，将 `MYSQL_HOST`、`MYSQL_PORT`、`REDIS_URL` 指向开发实例，再运行 `uvicorn src.main:app --reload --port 8000` 和 `python -m src.worker`。Redis 默认只开放容器网络，宿主机开发需提供本地 Redis 或另配开发端口。前端通过 Nginx 的 `/api/` 代理访问 API。
 
+待命整批的排序与发布逻辑有回归测试：在 `backend/` 安装 `requirements-dev.txt` 后运行 `python -m pytest tests`。测试用内存 SQLite 与 FastAPI 测试客户端，覆盖排序、预排原因、并发抢占退回、重复发布幂等、待命占用与靠泊预约互斥。
+
 | 服务 | 技术与职责 |
 |---|---|
-| frontend | Nginx 与原生 HTML/CSS/JS，班次图、潮汐与拖轮、间隔带、调度复盘 |
+| frontend | Nginx 与原生 HTML/CSS/JS，班次图、潮汐与拖轮、间隔带、待命整批、调度复盘 |
 | backend | FastAPI、SQLAlchemy、JWT 三角色、MySQL 事务与业务审计 |
 | worker | 常驻 Python 进程、Redis 唤醒、持久待分类队列、scikit-learn |
-| db | MySQL 8，实体、时段预约、模型快照、调度指令 |
+| db | MySQL 8，实体、时段预约、模型快照、待命批次与占用、调度指令 |
 | redis | Redis 7，传递案件已入队的唤醒事件 |
 
 `.env.example` 包含 `COMPOSE_PROJECT_NAME`、`FRONTEND_PORT`、`BACKEND_PORT`、`DB_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`JWT_SECRET` 与 `SEED_DEMO`。本地连接还可配置 `MYSQL_HOST`、`MYSQL_PORT`、`REDIS_URL`。默认凭据用于演示环境。`database`、`queue`、`artifacts` 为命名卷，数据库保存模型与业务记录，`artifacts` 为 API 与 worker 的共享产物目录。
 
 ## 算法和排程规则
 
-- 确认靠泊要求整个操纵区间都落在潮窗内、吃水不超限、拖轮预约与计划吻合、同泊位无其他已确认的重叠操纵。区间采用左闭右开口径。改期释放之前的拖轮预约，并保留历史记录。
+- 确认靠泊要求整个操纵区间都落在潮窗内、吃水不超限、拖轮预约与计划吻合、同泊位无其他已确认的重叠操纵。区间采用左闭右开口径。改期释放之前的拖轮预约，并保留历史记录。已发布的待命占用同样计入拖轮日历：之后再为靠泊预约同一拖轮会报 `TUG_CONFLICT`。
+- 待命整批只收录已判 `priority`、未发布过指令的案件。排序键依次为模型决策分数降序、观测时刻升序、案件编号升序。`queued`、`failed`、`margin_review` 案件不参与排序，单独列为等待复核。预排按时段左闭右开逐条尝试，优先复用该案自己的靠泊预约拖轮。仍然排不上的案件记为 `blocked` 并写明原因；主管确认时只对 `scheduled` 案件占用拖轮、写入 `DispatchReview` 与 `StandbyTugHold`，排不上的案件保持 `ready`。预排后若任一预排时段被新的靠泊预约或其他批次占用，整批发布回滚并标记 `returned`，不产生任何指令或占用。
 - 四项模型输入为引航偏离、潮窗结束余量、实测风速、拖轮等候。创建案件时冻结输入并生成 SHA-256。固定种子 `1074` 生成 720 条训练样本与独立生成的 240 条验证样本。`StandardScaler` 将训练特征中心化、缩放，再以 `SVC(kernel='rbf', C=1.7, gamma='scale')` 拟合。二分类用 `decision_function` 的符号提供建议，`|f(x)| ≤ 0.30` 进入人工复核。平衡准确率为两类召回率的均值。模型结果保留支持向量数、合成验证指标、参数和版本。
 - worker 使用 MySQL 待处理状态和行锁领取案件，Redis 唤醒丢失时继续扫描。计算失败写入错误，主管可以沿用冻结摘要重试。成功后原模型建议持续保留，模型签署与人工签署有不同的记录字段。
 - 已确认的计划冻结。调度指令支持跟踪、待命、通知改期。改期指令是发给引航席的交班记录，现场后续排程由引航席另行协调。模型指标源于合成数据，现场岗位发布的动作和实绩通过表单登记。
@@ -65,10 +79,10 @@ docker compose exec -T backend python -m scripts.seed_demo
 ## 代码位置
 
 - `backend/src/models.py` 定义实体与数据库约束，`schemas.py` 定义操作数据。`main.py` 首次启动建表，`backend/migrations/README.md` 记录建库入口。
-- `planning.py` 处理资源预约、撤销与确认，`incidents.py` 处理案件、签署、调度与复盘。`routes.py` 接入 JWT 权限和事务。`main.py` 提供请求跟踪、响应策略及全局业务错误处理。
-- `classifier.py` 和 `worker.py` 完成异步分类。`backend/scripts/seed_demo.py` 建立可演示班次。
-- `frontend/src/api.js` 对接接口，`store.js` 保存值班会话和班次数据，`planning.js` 和 `incidents.js` 提供业务页面，`ui.js` 复用状态标签、编辑表单、交班时间线和格式化函数。
-- 角色、申请状态、案件状态、分类和动作枚举在 `backend/src/models.py` 与 `frontend/src/store.js` 定义。后端 `schemas.py`、`security.py`、`routes.py`、`planning.py`、`incidents.py`、`worker.py` 与 `seed_demo.py` 消费上述枚举，分类器持久化两类预测标签。前端 `app.js`、`planning.js` 与 `incidents.js` 消费相同的 API 值。
+- `planning.py` 处理资源预约、撤销与确认，`incidents.py` 处理案件、签署、调度与复盘，`standby.py` 处理待命拖轮的整批预排、退回与发布。`routes.py` 接入 JWT 权限和事务。`main.py` 提供请求跟踪、响应策略及全局业务错误处理。
+- `classifier.py` 和 `worker.py` 完成异步分类。`backend/scripts/seed_demo.py` 建立可演示班次，其中三艘船在同一分钟争用待命拖轮。`backend/tests/` 覆盖排序、预排原因、整批退回与重复发布。
+- `frontend/src/api.js` 对接接口，`store.js` 保存值班会话和班次数据，`planning.js`、`incidents.js` 和 `standby.js` 提供业务页面，`ui.js` 复用状态标签、编辑表单、交班时间线和格式化函数。
+- 角色、申请状态、案件状态、分类、动作和待命批次枚举在 `backend/src/models.py` 与 `frontend/src/store.js` 定义。后端 `schemas.py`、`security.py`、`routes.py`、`planning.py`、`incidents.py`、`standby.py`、`worker.py` 与 `seed_demo.py` 消费上述枚举，分类器持久化两类预测标签。前端 `app.js`、`planning.js`、`incidents.js` 与 `standby.js` 消费相同的 API 值。
 
 License: MIT，见 `LICENSE`。
 

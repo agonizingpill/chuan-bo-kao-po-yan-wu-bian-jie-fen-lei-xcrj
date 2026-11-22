@@ -23,8 +23,8 @@ export function notes(label, name, hint) {
   return `<label>${esc(label)}<textarea required name="${name}" rows="2" minlength="5" maxlength="300" placeholder="${esc(hint)}"></textarea></label>`;
 }
 
-export function form(action, code, body, label, kind = '') {
-  return `<form data-action="${action}" data-code="${esc(code)}" class="operation ${kind}">${body}<div class="form-end"><button class="primary" type="submit">${label}</button><span class="form-error" role="alert"></span></div></form>`;
+export function form(action, code, body, label, kind = '', disabled = false) {
+  return `<form data-action="${action}" data-code="${esc(code)}" class="operation ${kind}">${body}<div class="form-end"><button class="primary" type="submit" ${disabled ? 'disabled' : ''}>${label}</button><span class="form-error" role="alert"></span></div></form>`;
 }
 
 export const blank = (caption, help) => `<div class="empty"><strong>${esc(caption)}</strong><p>${esc(help)}</p></div>`;
@@ -36,6 +36,12 @@ export const eventNames = {
   INCIDENT_QUEUED: '登记现场延误', INCIDENT_REQUEUED: '重试模型', MODEL_FAILED: '模型计算失败', MODEL_CLASSIFIED: '模型分类',
   MARGIN_REVIEWED: '主管签署分类', MARGIN_REVIEW_REQUIRED: '间隔带未复核', ACTION_ISSUED: '发布调度指令', REVIEW_CLOSED: '完成复盘',
   PRIORITY_ACTION_REQUIRED: '处置级别不符', ALL_FAST_TIME: '复盘时间不符',
+  STANDBY_PLANNED: '生成待命预排', STANDBY_REPLANNED: '重新预排待命', STANDBY_PUBLISHED: '整批确认发布',
+  STANDBY_RETURNED: '整批退回重排', STANDBY_HOLD_RELEASED: '释放待命占用',
+  STANDBY_BATCH_PENDING: '批次待整批确认', STANDBY_INCOMPLETE: '整批排不上拖轮',
+  STANDBY_REPLAN_REQUIRED: '需重新预排', STANDBY_PUBLISH_STATE: '批次状态不符',
+  STANDBY_REPLAN_STATE: '批次不可重排', STANDBY_CASE_CHANGED: '案件状态已变',
+  DUPLICATE_STANDBY_BATCH: '批次编号重复', STANDBY_EMPTY: '无待排案件',
 };
 
 export function journal(events) {

@@ -98,19 +98,36 @@ def revise(db: DatabaseSession, actor: str, code: str, data: Schedule):
 
 
 def conflicting_tug(db, request, tug_code):
-    return db.scalar(select(TugAssignment).where(
+    assignment = db.scalar(select(TugAssignment).where(
         TugAssignment.tug_code == tug_code,
         TugAssignment.released_at.is_(None),
         TugAssignment.request_code != request.code,
         TugAssignment.starts_at < ends(request),
         TugAssignment.ends_at > request.eta,
     ).limit(1))
+    if assignment:
+        return f'{assignment.request_code} 的 {assignment.starts_at:%H:%M}–{assignment.ends_at:%H:%M} 靠泊预约'
+    # A published standby batch also holds tug time. Deferred import keeps
+    # planning free of a module cycle with standby.
+    from .models import DelayIncident, StandbyTugHold
+    hold = db.scalar(select(StandbyTugHold).join(
+        DelayIncident, DelayIncident.code == StandbyTugHold.incident_code,
+    ).where(
+        StandbyTugHold.tug_code == tug_code,
+        StandbyTugHold.released_at.is_(None),
+        DelayIncident.request_code != request.code,
+        StandbyTugHold.starts_at < ends(request),
+        StandbyTugHold.ends_at > request.eta,
+    ).limit(1))
+    if hold:
+        return f'待命批次 {hold.batch_code} 的 {hold.incident_code} {hold.starts_at:%H:%M}–{hold.ends_at:%H:%M}'
+    return None
 
 
 def require_free_tug(db, request, tug_code):
     conflict = conflicting_tug(db, request, tug_code)
     if conflict:
-        note = f'{tug_code} 与 {conflict.request_code} 的 {conflict.starts_at:%H:%M}–{conflict.ends_at:%H:%M} 重叠，请换轮或改期'
+        note = f'{tug_code} 与 {conflict} 重叠，请换轮或改期'
         raise Rejected('TUG_CONFLICT', note, request.code)
 
 
